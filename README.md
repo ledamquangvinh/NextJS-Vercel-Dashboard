@@ -235,3 +235,150 @@ Client-side transitions are what makes a server-rendered apps feel like client-r
 
 Read more about what make Transition slow here: [What makes transition slow](https://nextjs.org/docs/app/getting-started/linking-and-navigating#what-can-make-transitions-slow)
 
+## Server and Component
+* Basically by default, all pages and layouts are server component.
+
+### When to use which?
+#### Client Component
+Use Client Component when you need:
+* State and event hanlder like ***onClick***, ***onChange***
+* Lfiecyle logic, eg ***useEffect***
+* Browser-only API eg ***localStorage***, ***window***, ***Navigator.geolocation***.
+* Custom hooks
+#### Server Component
+We use Server Component when: 
+* Fetch data from database or APIs close to source.
+* Use API keys, tokens, and other secrets without exposing them to client
+* Reduce the amount of Javascript sent to browser.
+* Improve [First Contentful Paint(FCP)](https://web.dev/fcp/), and stream content progressively to the client.
+
+The example below demonstrate the Page.tsx is a Server Component fetch data of Posts and pass it as a prop to LikeButton Component which is a client-side.
+
+```tsx
+import LikeButton from '@/app/ui/like-button'
+import { getPost } from '@/lib/data'
+ 
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ id: string }>
+}) {
+  // Get Posts
+  const { id } = await params
+  const post = await getPost(id)
+ 
+  return (
+    <div>
+      <main>
+        <h1>{post.title}</h1>
+        {/* ... */}
+        <LikeButton likes={post.likes} />
+      </main>
+    </div>
+  )
+}
+```
+
+```tsx
+'use client' // This statement define this page as client-side
+ 
+import { useState } from 'react'
+ 
+export default function LikeButton({ likes }: { likes: number }) {
+  // ...
+}
+```
+
+### How do Server and Client work in NextJS
+#### On the Server 
+* On the server, Next.js uses React's APIs to orchestrate rendering. The rendering work is split into chunks, by individual route segments (layouts and pages), including parallel route slots whether or not they are displayed:
+  * Server Components are rendered into a special data format called the React Server Component Payload (RSC Payload).
+  * Client Components and the RSC Payload are used to prerender HTML.
+
+#### On the Client
+* Then, on the client:
+  * HTML is used to immediately show a fast non-interactive preview of the route to the user.
+  * RSC Payload is used to reconcile the Client and Server Component trees.
+  * JavaScript is used to hydrate Client Components and make the application interactive.
+
+### Few notes
+* To make a page a Client-side just ***'use client'*** at the top of the page
+* You can pass data from Server Component to Client Component via props. Example passing the post above.
+* Context provider, the [React Context](https://react.dev/learn/passing-data-deeply-with-context) can only use in Client Component. To use Context create a client Component that accept ***children***
+```tsx
+'use client'
+ 
+import { createContext } from 'react'
+ 
+export const ThemeContext = createContext({})
+ 
+export default function ThemeProvider({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return <ThemeContext.Provider value="dark">{children}</ThemeContext.Provider>
+}
+```
+then import into Server Component
+```tsx
+import ThemeProvider from './theme-provider'
+ 
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <html>
+      <body>
+        <ThemeProvider>{children}</ThemeProvider>
+      </body>
+    </html>
+  )
+}
+```
+* Third party Component
+  * When import the 3rd party that relies on client-only feature but yet doesn't have ***'use client'*** and we want to use it in the server component we need to wrap it.
+  * For example, we have the ***Carousel*** imported from the ***acme-carousel***. If you use it in the Client Component then it fine.
+```tsx
+'use client'
+ 
+import { useState } from 'react'
+import { Carousel } from 'acme-carousel'
+ 
+export default function Gallery() {
+  const [isOpen, setIsOpen] = useState(false)
+ 
+  return (
+    <div>
+      <button onClick={() => setIsOpen(true)}>View pictures</button>
+      {/* Works, since Carousel is used within a Client Component */}
+      {isOpen && <Carousel />}
+    </div>
+  )
+}
+```
+
+It work inside another 'use client' component. But not the Server Component, here is how we fix it
+```tsx
+'use client'
+ 
+import { Carousel } from 'acme-carousel'
+ 
+export default Carousel
+```
+now we can use inside the Server Component
+```tsx
+import Carousel from './carousel'
+ 
+export default function Page() {
+  return (
+    <div>
+      <p>View pictures</p>
+      {/*  Works, since Carousel is a Client Component */}
+      <Carousel />
+    </div>
+  )
+}
+```
