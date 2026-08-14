@@ -3,6 +3,7 @@ packages:
 allowBuilds:
   bcrypt: false
   sharp: false
+  unrs-resolver: false
 minimumReleaseAge: 2880
 onlyBuiltDependencies:
   - bcrypt
