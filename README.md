@@ -382,3 +382,518 @@ export default function Page() {
   )
 }
 ```
+
+## Fetching Data
+
+### Server Components
+
+* In Server Component we can fetch data using any asynchronus I/O like:
+  * fetch API
+  * ORM or Database
+
+#### Fetch API
+* To fetch API, turn your fetch into a asynchronus function and await fetch call.
+
+```tsx
+export default async function Page() {
+  const data = await fetch('https://api.vercel.app/blog')
+  const posts = await data.json()
+  return (
+    <ul>
+      {posts.map((post) => (
+        <li key={post.id}>{post.title}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+#### With ORM or Database
+* Since Server Components are rendered on the server, credentials and query logic will not be included in the client bundle so you can safely make database queries using an ORM or database client.
+```tsx
+import { db, posts } from '@/lib/db'
+ 
+export default async function Page() {
+  const allPosts = await db.select().from(posts)
+  return (
+    <ul>
+      {allPosts.map((post) => (
+        <li key={post.id}>{post.title}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+#### Streaming
+* When data is fetched, it will be rendered on Server Component and sent to browser like we discussed above. If data is slow to fetch it will take long time to have a full UI. That's why we use ***Streaming*** to divide the UI into ***chunks***. The fast data can display first and the slower can display later.
+
+##### Streaming with ***loading.tsx***
+* We create ***loading.tsx*** file inside the folder we want to stream while the data is being fetched.
+
+```tsx
+export default function Loading() {
+  // Define the Loading UI here
+  return <div>Loading...</div>
+}
+```
+* On navigation, the user will see the **loading state** of the page being render. 
+* Behind the scene, the **loading** page will automatically wrap the ***page.tsx** file and any children below the ***'Suspense'*** boundary
+
+![fetch-loading](./img/fetch-loading.png)
+
+* This make a block navigation which have to wait until the layout finishes rendering. To fix this we use ***Suspense*** boundary with a fallback.
+* This is why, while loading.js works well for streaming route segments, using Suspense closer to the runtime or uncached data access is recommended.
+
+##### With ***Suspense***
+* ***Suspense*** allows you to be more granular about what parts of the page you want to stream.
+
+```tsx
+import { Suspense } from 'react'
+import BlogList from '@/components/BlogList'
+import BlogListSkeleton from '@/components/BlogListSkeleton'
+ 
+export default function BlogPage() {
+  return (
+    <div>
+      {/* This content will be sent to the client immediately */}
+      <header>
+        <h1>Welcome to the Blog</h1>
+        <p>Read the latest posts below.</p>
+      </header>
+      <main>
+        {/* If there's any dynamic content inside this boundary, it will be streamed in */}
+        <Suspense fallback={<BlogListSkeleton />}>
+          <BlogList />
+        </Suspense>
+      </main>
+    </div>
+  )
+}
+```
+
+* You can show anything outside the boundary and stream the list of components you need to stream inside the boundary
+
+
+* For best user experience, we recommend designing the loading states that are meaningful and help user to understand the app is responding.
+
+#### Client components
+* There are 2 ways to fetch data in Client Components, using:
+  * React ***use*** API 
+  * A community library like SWR or React Query
+
+##### Streaming data with the ***use*** API
+* Start by fetch data inside your Server Component and pass a promise to your Client Component as prop:
+```tsx
+import Posts from '@/app/ui/posts'
+import { Suspense } from 'react'
+ 
+export default function Page() {
+  // Don't await the data fetching function
+  const posts = getPosts()
+ 
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <Posts posts={posts} />
+    </Suspense>
+  )
+}
+```
+
+* In your Client Component use the ***use*** API to read the promise:
+```tsx
+'use client'
+import { use } from 'react'
+ 
+export default function Posts({
+  posts,
+}: {
+  posts: Promise<{ id: string; title: string }[]>
+}) {
+  const allPosts = use(posts)
+ 
+  return (
+    <ul>
+      {allPosts.map((post) => (
+        <li key={post.id}>{post.title}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+##### Using Community Libraries
+* You can use library like [SWR](https://swr.vercel.app/) or [React Query](https://tanstack.com/query/latest) to fetch data in CLient Component.
+
+```tsx
+'use client'
+import useSWR from 'swr'
+ 
+const fetcher = (url) => fetch(url).then((r) => r.json())
+ 
+export default function BlogPage() {
+  const { data, error, isLoading } = useSWR(
+    'https://api.vercel.app/blog',
+    fetcher
+  )
+ 
+  if (isLoading) return <div>Loading...</div>
+  if (error) return <div>Error: {error.message}</div>
+ 
+  return (
+    <ul>
+      {data.map((post: { id: string; title: string }) => (
+        <li key={post.id}>{post.title}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+#### Sequential Data Fetching
+* Sequential data fetching happens when one request depends on data from another.
+```tsx
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ username: string }>
+}) {
+  const { username } = await params
+  // Get artist information
+  const artist = await getArtist(username)
+ 
+  return (
+    <>
+      <h1>{artist.name}</h1>
+      {/* Show fallback UI while the Playlists component is loading */}
+      <Suspense fallback={<div>Loading...</div>}>
+        {/* Pass the artist ID to the Playlists component */}
+        <Playlists artistID={artist.id} />
+      </Suspense>
+    </>
+  )
+}
+ 
+async function Playlists({ artistID }: { artistID: string }) {
+  // Use the artist ID to fetch playlists
+  const playlists = await getArtistPlaylists(artistID)
+ 
+  return (
+    <ul>
+      {playlists.map((playlist) => (
+        <li key={playlist.id}>{playlist.name}</li>
+      ))}
+    </ul>
+  )
+}
+```
+* In this example, <Suspense> allows the playlists to stream in after the artist data loads. However, the page still waits for the artist data before displaying anything. To prevent this, you can wrap the entire page component in a <Suspense> boundary (for example, using a loading.js file) to show a loading state immediately.
+
+#### Parallel data fetching
+* Parallel data fetching happens when data requests in a route are eagerly initiated and start at the same time.
+
+* However, within any component, multiple async/await requests can still sequential if placed after the other.
+
+```tsx
+import { getArtist, getAlbums } from '@/app/lib/data'
+ 
+export default async function Page({ params }) {
+  // These requests will be sequential
+  const { username } = await params
+  const artist = await getArtist(username)
+  const albums = await getAlbums(username)
+  return <div>{artist.name}</div>
+}
+```
+Start multiple request by calling ***fetch***, then await them with ***Promise.all***. Request begin as soon as ***fetch*** is called.
+
+```tsx
+import Albums from './albums'
+ 
+async function getArtist(username: string) {
+  const res = await fetch(`https://api.example.com/artist/${username}`)
+  return res.json()
+}
+ 
+async function getAlbums(username: string) {
+  const res = await fetch(`https://api.example.com/artist/${username}/albums`)
+  return res.json()
+}
+ 
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ username: string }>
+}) {
+  const { username } = await params
+ 
+  // Initiate requests
+  const artistData = getArtist(username)
+  const albumsData = getAlbums(username)
+ 
+  const [artist, albums] = await Promise.all([artistData, albumsData])
+ 
+  return (
+    <>
+      <h1>{artist.name}</h1>
+      <Albums list={albums} />
+    </>
+  )
+}
+```
+
+#### Reusing dta with ***React.cache***
+* Wrap a data-fetching funciton in [React.cache](https://react.dev/reference/react/cache) so multiple component in the same request share on result instead of refetching:
+```tsx
+import { cache } from 'react'
+ 
+export const getUser = cache(async () => {
+  const res = await fetch('https://api.example.com/user')
+  return res.json()
+})
+```
+
+
+```tsx
+import { getUser } from '../lib/user'
+ 
+export default async function DashboardPage() {
+  const user = await getUser() // Cached - same request, no duplicate fetch
+  return <h1>Dashboard for {user.name}</h1>
+}
+```
+* Since getUser is wrapped with React.cache, multiple calls within the same request return the same memoized result, whether called directly in Server Components or resolved via context in Client Components.
+
+## Mutating Data
+
+
+### Creating Server Functions
+* ***use server*** directive use to define a function as Server Function. You can place at the top of an Asynchronus funtion or at the separate file to mark all exports of that file.
+```tsx
+import { auth } from '@/lib/auth'
+ 
+export async function createPost(formData: FormData) {
+  'use server'
+  const session = await auth()
+  if (!session?.user) {
+    throw new Error('Unauthorized')
+  }
+ 
+  const title = formData.get('title')
+  const content = formData.get('content')
+ 
+  // Mutate data
+  // Revalidate cache
+}
+ 
+export async function deletePost(formData: FormData) {
+  'use server'
+  const session = await auth()
+  if (!session?.user) {
+    throw new Error('Unauthorized')
+  }
+ 
+  const id = formData.get('id')
+ 
+  // Verify the user owns this resource before deleting
+  // Mutate data
+  // Revalidate cache
+}
+
+```
+
+#### Server Components
+Server Functions can be inlined in Server Components by adding the ***use server*** directive to the top of the function body:
+```tsx
+export default function Page() {
+  // Server Action
+  async function createPost(formData: FormData) {
+    'use server'
+    // ...
+  }
+ 
+  return <></>
+}
+```
+
+#### Client Components
+* It is not possible to define Server Function inside a Client Component.
+```tsx
+'use server'
+ 
+export async function createPost() {}
+```
+
+```tsx
+'use client'
+ 
+import { createPost } from '@/app/actions'
+ 
+export function Button() {
+  return <button formAction={createPost}>Create</button>
+}
+```
+* But you can import a ***Server Function** to a ***Client Component***.
+
+#### Passing actions as props
+* You can also pass an action to Client Component as prop:
+```tsx
+'use client'
+ 
+export default function ClientComponent({
+  updateItemAction,
+}: {
+  updateItemAction: (formData: FormData) => void
+}) {
+  return <form action={updateItemAction}>{/* ... */}</form>
+}
+```
+
+### Invoking Server Functions
+* There are 2 ways to invoke a ***Server Function***
+  * Forms
+  * Event Handlers and useEffect in ***Client Components***
+
+#### Forms
+* React extends HTML ***form*** element to allow Server Function to pass inside the ***action*** prop.
+```tsx
+import { createPost } from '@/app/actions'
+ 
+export function Form() {
+  return (
+    <form action={createPost}>
+      <input type="text" name="title" />
+      <input type="text" name="content" />
+      <button type="submit">Create</button>
+    </form>
+  )
+}
+```
+
+```tsx
+'use server'
+ 
+import { auth } from '@/lib/auth'
+ 
+export async function createPost(formData: FormData) {
+  const session = await auth()
+  if (!session?.user) {
+    throw new Error('Unauthorized')
+  }
+ 
+  const title = formData.get('title')
+  const content = formData.get('content')
+ 
+  // Mutate data
+  // Revalidate cache
+}
+```
+
+#### Event Handlers
+* You can invoke a Server Function in onClick() events handler(or any events handler) in a Client Component.
+```tsx
+'use client'
+ 
+import { incrementLike } from './actions'
+import { useState } from 'react'
+ 
+export default function LikeButton({ initialLikes }: { initialLikes: number }) {
+  const [likes, setLikes] = useState(initialLikes)
+ 
+  return (
+    <>
+      <p>Total Likes: {likes}</p>
+      <button
+        onClick={async () => {
+          const updatedLikes = await incrementLike()
+          setLikes(updatedLikes)
+        }}
+      >
+        Like
+      </button>
+    </>
+  )
+}
+```
+
+#### Showing a pending state
+* We can use React ***useActionState*** hook to return pending boolean.
+```tsx
+'use client'
+ 
+import { useActionState, startTransition } from 'react'
+import { createPost } from '@/app/actions'
+import { LoadingSpinner } from '@/app/ui/loading-spinner'
+ 
+export function Button() {
+  const [state, action, pending] = useActionState(createPost, false)
+ 
+  return (
+    <button onClick={() => startTransition(action)}>
+      {pending ? <LoadingSpinner /> : 'Create Post'}
+    </button>
+  )
+}
+```
+
+#### Refresh data
+* After mutation, you can refresh the page to display the latest data by calling ***refresh*** from ***next/cache*** in Server Action:
+
+```tsx
+'use server'
+ 
+import { auth } from '@/lib/auth'
+import { refresh } from 'next/cache'
+ 
+export async function updatePost(formData: FormData) {
+  const session = await auth()
+  if (!session?.user) {
+    throw new Error('Unauthorized')
+  }
+  // Mutate data
+  // ...
+ 
+  refresh()
+}
+```
+
+#### Revalidate Data
+* After performing a mutation, you can revalidate the Nextjs.cache and show the updated data by calling [revalidatePath](https://nextjs.org/docs/app/api-reference/functions/revalidatePath) or [revalidateTag](https://nextjs.org/docs/app/api-reference/functions/revalidateTag) withing Server Function:
+
+```tsx
+import { auth } from '@/lib/auth'
+import { revalidatePath } from 'next/cache'
+ 
+export async function createPost(formData: FormData) {
+  'use server'
+  const session = await auth()
+  if (!session?.user) {
+    throw new Error('Unauthorized')
+  }
+  // Mutate data
+  // ...
+ 
+  revalidatePath('/posts')
+}
+```
+
+#### Redirect after a mutation
+```tsx
+'use server'
+ 
+import { auth } from '@/lib/auth'
+import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
+ 
+export async function createPost(formData: FormData) {
+  const session = await auth()
+  if (!session?.user) {
+    throw new Error('Unauthorized')
+  }
+  // Mutate data
+  // ...
+ 
+  revalidatePath('/posts')
+  redirect('/posts')
+}
+```
