@@ -897,3 +897,248 @@ export async function createPost(formData: FormData) {
   redirect('/posts')
 }
 ```
+
+## Error Handling
+* There are 2 types of error: ***Expected Error*** and ***Uncaught exceptions***. This section will help you handle these errors.
+
+### Handling expected errors
+* Expected errors are those that can occur during the normal operation of the application, such as those from server-side form validation or failed requests. These errors should be handled explicitly and returned to the client.
+
+#### Server Function
+* Instead of using ***try/catch***, the model expected errors to return values.
+```tsx
+'use server'
+ 
+export async function createPost(prevState: any, formData: FormData) {
+  const title = formData.get('title')
+  const content = formData.get('content')
+ 
+  const res = await fetch('https://api.vercel.app/posts', {
+    method: 'POST',
+    body: { title, content },
+  })
+  const json = await res.json()
+ 
+  if (!res.ok) {
+    return { message: 'Failed to create post' }
+  }
+}
+```
+
+* You can pass action to the ***useActionState*** hook and use the returned state to display an error message.
+
+```tsx
+'use client'
+ 
+import { useActionState } from 'react'
+import { createPost } from '@/app/actions'
+ 
+const initialState = {
+  message: '',
+}
+ 
+export function Form() {
+  const [state, formAction, pending] = useActionState(createPost, initialState)
+ 
+  return (
+    <form action={formAction}>
+      <label htmlFor="title">Title</label>
+      <input type="text" id="title" name="title" required />
+      <label htmlFor="content">Content</label>
+      <textarea id="content" name="content" required />
+      {state?.message && <p aria-live="polite">{state.message}</p>}
+      <button disabled={pending}>Create Post</button>
+    </form>
+  )
+}
+```
+#### Server Component
+* When fetching data inside of a Server Component, you can use the response to conditionally render an error message or redirect.
+```tsx
+export default async function Page() {
+  const res = await fetch(`https://...`)
+  const data = await res.json()
+ 
+  if (!res.ok) {
+    return 'There was an error.'
+  }
+ 
+  return '...'
+}
+```
+
+#### Not Found
+* You can use ***notFound*** function within the route segment and use ***notFound.tsx*** to show ***404*** UI.
+```tsx
+import { notFound } from 'next/navigation'
+import { getPostBySlug } from '@/lib/posts'
+ 
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ slug: string }>
+}) {
+  const { slug } = await params
+  const post = getPostBySlug(slug)
+ 
+  if (!post) {
+    notFound()
+  }
+ 
+  return <div>{post.title}</div>
+}
+```
+
+```tsx
+export default function NotFound() {
+  return <div>404 - Page Not Found</div>
+}
+```
+
+### Handling uncaught exceptions
+* Uncaught exceptions are unexpected errors that indicate bugs or issues that should not occur during the normal flow of your application. These should be handled by throwing errors, which will then be caught by error boundaries.
+
+#### Nested error boundaries
+* Create a Error boundaries to help catch errors in the child component instead of crash the component tree.
+* Here is an example of ***error.tsx***. If any error occur in the nested component, this UI will appear.
+```tsx
+'use client' // Error boundaries must be Client Components
+ 
+import { useEffect } from 'react'
+ 
+export default function ErrorPage({
+  error,
+  retry,
+}: {
+  error: Error & { digest?: string }
+  retry: () => void
+}) {
+  useEffect(() => {
+    // Log the error to an error reporting service
+    console.error(error)
+  }, [error])
+ 
+  return (
+    <div>
+      <h2>Something went wrong!</h2>
+      <button
+        onClick={
+          // Attempt to recover by re-fetching and re-rendering the segment
+          () => retry()
+        }
+      >
+        Try again
+      </button>
+    </div>
+  )
+}
+```
+
+* For component-level error recovery, the catchError function lets you create error boundaries that can wrap any part of your component tree:
+
+```tsx
+'use client'
+ 
+import { catchError, type ErrorInfo } from 'next/error'
+ 
+function ErrorFallback(props: { title: string }, { error, retry }: ErrorInfo) {
+  return (
+    <div>
+      <h2>{props.title}</h2>
+      <p>{error.message}</p>
+      <button onClick={() => retry()}>Try again</button>
+    </div>
+  )
+}
+ 
+export default catchError(ErrorFallback)
+```
+
+* Then use the returned component as a wrapper in any layout or page:
+```tsx
+import ErrorBoundary from './custom-error-boundary'
+ 
+export default function Component({ children }: { children: React.ReactNode }) {
+  return <ErrorBoundary title="Dashboard Error">{children}</ErrorBoundary>
+}
+```
+
+* In general, errors in event handlers or async code aren’t handled by error boundaries because they run after rendering.
+* To handle these cases, catch the error manually and store it using useState or useReducer, then update the UI to inform the user.
+
+```tsx
+'use client'
+ 
+import { useState } from 'react'
+ 
+export function Button() {
+  const [error, setError] = useState(null)
+ 
+  const handleClick = () => {
+    try {
+      // do some work that might fail
+      throw new Error('Exception')
+    } catch (reason) {
+      setError(reason)
+    }
+  }
+ 
+  if (error) {
+    /* render fallback UI */
+  }
+ 
+  return (
+    <button type="button" onClick={handleClick}>
+      Click me
+    </button>
+  )
+}
+```
+
+* Note that unhandled errors inside startTransition from useTransition, will bubble up to the nearest error boundary.
+
+```tsx
+'use client'
+ 
+import { useTransition } from 'react'
+ 
+export function Button() {
+  const [pending, startTransition] = useTransition()
+ 
+  const handleClick = () =>
+    startTransition(() => {
+      throw new Error('Exception')
+    })
+ 
+  return (
+    <button type="button" onClick={handleClick}>
+      Click me
+    </button>
+  )
+}
+```
+
+#### Global Errors
+* While less common, you can handle errors in the root layout using the global-error.js file, located in the root app directory, even when leveraging internationalization. Global error UI must define its own html and body tags, since it is replacing the root layout or template when active.
+
+```tsx
+'use client' // Error boundaries must be Client Components
+ 
+export default function GlobalError({
+  error,
+  retry,
+}: {
+  error: Error & { digest?: string }
+  retry: () => void
+}) {
+  return (
+    // global-error must include html and body tags
+    <html>
+      <body>
+        <h2>Something went wrong!</h2>
+        <button onClick={() => retry()}>Try again</button>
+      </body>
+    </html>
+  )
+}
+```
